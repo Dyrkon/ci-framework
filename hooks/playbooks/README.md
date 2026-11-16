@@ -79,3 +79,58 @@ no output.
 
 * `cifmw_link2file_files` (str) A comma separated string of file names to be
   replaced.
+
+## prepare_baremetalset_root_password.yaml
+This hook generates a random bare-metal root password for a run, persists it
+outside of collected artifacts (namespaced by a run ID) and populates the
+`baremetalset-password.env` file of an architecture nodeset before kustomize
+builds it. It targets nodesets generating the `baremetalset-password-secret`
+Secret from that env file through their `secretGenerator`, instead of embedding
+a hardcoded password. The hook refuses to run against nodesets still using
+another password implementation, and never logs the password value.
+
+### Input
+* `baremetalset_password_run_id`: (string) Unique run identifier (alphanumerics,
+  dashes and underscores only, e.g. the Zuul build ID). Used to namespace the
+  persisted password file, so the verification hook can compare the same value.
+* `baremetalset_password_nodeset`: (string) Nodeset directory, relative to the
+  architecture repository root, that owns `baremetalset-password.env`.
+* `baremetalset_password_architecture_repo`: (Optional) Path to the architecture
+  repository checkout. Defaults to `cifmw_architecture_repo`, then to the Zuul
+  checkout layout.
+
+### Output
+None (populates `baremetalset-password.env` in the nodeset directory and a
+per-run password file under `~/.config/cifmw-validation/`).
+
+## verify_baremetalset_root_password.yaml
+This hook asserts that the live `baremetalset-password-secret` Secret deployed
+in the cluster matches both the password persisted for the same run ID by
+`prepare_baremetalset_root_password.yaml` and the env file consumed by the
+nodeset build. It never logs the password value.
+
+### Input
+Same as `prepare_baremetalset_root_password.yaml`, with the same values used
+at preparation time.
+
+### Output
+None (fails when any of the compared values diverge).
+
+### Example wiring
+Both hooks are usually wired around the nodeset build stage, for instance as
+job variables consumed by the `run_hook` role:
+
+```yaml
+pre_stage_5_run_02_prepare_root_password:
+  type: playbook
+  source: prepare_baremetalset_root_password.yaml
+  extra_vars:
+    baremetalset_password_run_id: "{{ zuul.build }}"
+    baremetalset_password_nodeset: dt/nova/nova04delta/edpm/nodeset
+post_stage_5_run_99_verify_root_password:
+  type: playbook
+  source: verify_baremetalset_root_password.yaml
+  extra_vars:
+    baremetalset_password_run_id: "{{ zuul.build }}"
+    baremetalset_password_nodeset: dt/nova/nova04delta/edpm/nodeset
+```
